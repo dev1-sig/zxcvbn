@@ -8,6 +8,9 @@ DICTIONARY_MATCHERS = [
   build_dict_matcher('male_names',   build_ranked_dict(male_names)),
   build_dict_matcher('female_names', build_ranked_dict(female_names)),
   build_dict_matcher('surnames',     build_ranked_dict(surnames)),
+  build_dict_matcher('chinese',     build_ranked_dict(chinese)),
+  build_dict_matcher('chinese_names',     build_ranked_dict(chinese_names)),
+  build_dict_matcher('chinese_surnames',     build_ranked_dict(chinese_surnames)),
   build_dict_matcher('user_inputs',  ranked_user_inputs_dict),
 ]
 
