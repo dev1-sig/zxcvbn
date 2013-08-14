@@ -1,3 +1,4 @@
+#!/usr/bin/python
 
 import os
 import time
@@ -5,6 +6,8 @@ import codecs
 import urllib
 import simplejson
 import urllib2
+import re
+import unicodedata, sys
 
 from pprint import pprint
 
@@ -34,22 +37,23 @@ def get_ranked_english():
 
     ranked_terms = [] # ordered by rank, in decreasing frequency.
     for url in urls:
-        html, is_cached = wiki_download(url)
-        if not is_cached:
-            time.sleep(SLEEP_TIME)
+        html, is_cached = english_wiki_download(url)
+
         new_terms = parse_wiki_terms(html)
         ranked_terms.extend(new_terms)
 
     return ranked_terms
 
-def wiki_download(url):
+def english_wiki_download(url):
+    freq_range = url[url.rindex('/')+1:]
+
+    tmp_path = '../data/tv_and_movie_freqlist%s.html' % freq_range
+    return wiki_download(url, tmp_path)
+
+def wiki_download(url, tmp_path):
     '''
     scrape friendly: sleep 20 seconds between each request, cache each result.
     '''
-    DOWNLOAD_TMPL = '../data/tv_and_movie_freqlist%s.html'
-    freq_range = url[url.rindex('/')+1:]
-
-    tmp_path = DOWNLOAD_TMPL % freq_range
     if os.path.exists(tmp_path):
         print 'cached.......', url
         with codecs.open(tmp_path, 'r', 'utf8') as f:
@@ -62,10 +66,13 @@ def wiki_download(url):
         response = urllib2.urlopen(req)
         result = response.read().decode('utf8')
         f.write(result)
+        time.sleep(SLEEP_TIME)
         return result, False
 
 def parse_wiki_terms(doc):
-    '''who needs an html parser. fragile hax, but checks the result at the end'''
+    '''
+    who needs an html parser. fragile hax, but checks the result at the end
+    '''
     results = []
     last3 = ['', '', '']
     header = True
@@ -119,6 +126,141 @@ def get_ranked_common_passwords():
             lst.append(line.strip())
     return lst
 
+
+'''
+--------------------------------------------------
+Chinese dictionary build - START
+--------------------------------------------------
+'''
+
+# ------------ Chinese surnames
+def get_chinese_surnames():
+    urls = []
+    urls.append("http://www.mandarinhouse.com/100-common-chinese-family-names")
+
+    ranked_terms = []
+    for url in urls:
+        html, is_cached = wiki_download(url, '../data/Chinese_surnames.html')
+
+        new_terms = parse_chinese_wiki(html, r'^<p>\d.*?([\w\-]+)</p>.*$', r'^<p>\d.*')
+        ranked_terms.extend(new_terms)
+
+    return ranked_terms
+
+# ------------ Chinese names
+def get_chinese_names():
+	urls = []
+	urls.append("http://www.top-100-baby-names-search.com/female-chinese-names.html")
+	urls.append("http://www.top-100-baby-names-search.com/chinese-girl-names.html")
+	urls.append("http://www.top-100-baby-names-search.com/chinese-male-names.html")
+	urls.append("http://www.top-100-baby-names-search.com/chinese-boys-names.html")
+
+	ranked_terms = []
+	for url in urls:
+		# we want all Chinese files to start with word Chinese
+		tmp_path = '../data/Chinese_names_%s' %  url[url.rindex('/')+1:].replace("chinese-", "")
+
+		html, is_cached = wiki_download(url, tmp_path)
+
+		new_terms = parse_chinese_wiki(html, r'.*<td width="25%" class="tablecellstyle[89]+">([\w\s\-]+)</td>.*$', r'.*<p>\d+.*')
+		ranked_terms.extend(new_terms)
+
+	return ranked_terms
+
+
+# ------------ Chinese freq words
+
+def get_chinese_freq_words():
+	URL_TMPL = 'http://en.wiktionary.org/wiki/Appendix:Mandarin_Frequency_lists/%s'
+	urls = []
+	for i in xrange(10):
+		freq_range = "%d-%d" % (i * 1000 + 1, (i+1) * 1000)
+		urls.append(URL_TMPL % freq_range)
+
+	ranked_terms = [] # ordered by rank, in decreasing frequency.
+	for url in urls:
+		tmp_path = '../data/Chinese_Frequency_lists_%s.html' % url[url.rindex('/')+1:]
+
+		html, is_cached = wiki_download(url, tmp_path)
+
+		new_terms = parse_chinese_wiki(html, r'.*>(.*)</a>\).*', r'^.*<li>.*')
+		ranked_terms.extend(new_terms)
+
+	return ranked_terms
+
+## -------------------------------------------------------------
+# ------------ Chinese parsing and character mapping functions
+
+def parse_chinese_wiki(doc, regex_term, regex_start_line):
+    results = []
+    for line in doc.split('\n'):
+		line = line.lower().translate(unaccented_map())
+		matchObj = re.match(regex_term, line, re.S)
+		if matchObj:
+			terms = matchObj.group(1).strip()
+			terms = terms.replace("-", " ")
+			for term in terms.split():
+				if term not in results:
+					results.append(term)
+		else:
+			if re.match(regex_start_line, line, re.S):
+				print "\nCannot process line: \n"
+				print line
+
+    return results
+
+# Translation dictionary.  Translation entries are added to this
+# dictionary as needed.
+
+class unaccented_map(dict):
+
+    ##
+    # Maps a unicode character code (the key) to a replacement code
+    # (either a character code or a unicode string).
+
+    def mapchar(self, key):
+        ch = self.get(key)
+        if ch is not None:
+            return ch
+        de = unicodedata.decomposition(unichr(key))
+        if de:
+            try:
+                ch = int(de.split(None, 1)[0], 16)
+            except (IndexError, ValueError):
+                ch = key
+        else:
+            ch = CHAR_REPLACEMENT.get(key, key)
+        self[key] = ch
+        return ch
+
+    if sys.version >= "2.5":
+        # use __missing__ where available
+        __missing__ = mapchar
+    else:
+        # otherwise, use standard __getitem__ hook (this is slower,
+        # since it's called for each character)
+        __getitem__ = mapchar
+
+CHAR_REPLACEMENT = {
+    # latin-1 characters that don't have a unicode decomposition
+    0xc6: u"AE", # LATIN CAPITAL LETTER AE
+    0xd0: u"D",  # LATIN CAPITAL LETTER ETH
+    0xd8: u"OE", # LATIN CAPITAL LETTER O WITH STROKE
+    0xde: u"Th", # LATIN CAPITAL LETTER THORN
+    0xdf: u"ss", # LATIN SMALL LETTER SHARP S
+    0xe6: u"ae", # LATIN SMALL LETTER AE
+    0xf0: u"d",  # LATIN SMALL LETTER ETH
+    0xf8: u"oe", # LATIN SMALL LETTER O WITH STROKE
+    0xfe: u"th", # LATIN SMALL LETTER THORN
+    }
+
+'''
+--------------------------------------------------
+Chinese dictionary build - END
+--------------------------------------------------
+'''
+
+
 def to_ranked_dict(lst):
     return dict((word, i) for i, word in enumerate(lst))
 
@@ -144,8 +286,24 @@ def filter_ascii(lst):
     '''
     return [word for word in lst if all(ord(c) < 128 for c in word)]
 
+
 def to_js(lst, lst_name):
     return 'var %s = %s;\n\n' % (lst_name, simplejson.dumps(lst))
+
+'''
+yaml files are needed for ruby gem
+'''
+def build_yaml(file_name, list_names, lsts):
+	with open('../frequency_list.%s.yaml' % file_name, 'w') as f:
+		f.write("---\n")
+		for lst_name in list_names:
+			lst = lsts[lst_name]
+			for term in lst:
+				f.write("- ")
+				if term.isdigit():
+					term = '"%s"' % term
+				f.write(term)
+				f.write("\n")
 
 def main():
     english = get_ranked_english()
@@ -157,20 +315,31 @@ def main():
      passwords] = [filter_ascii(filter_short(lst)) for lst in (english,
                                                                surnames, male_names, female_names,
                                                                passwords)]
+    chinese = get_chinese_freq_words()
+    chinese_surnames = get_chinese_surnames()
+    chinese_names = get_chinese_names()
 
     # make dictionaries disjoint so that d1 & d2 == set() for any two dictionaries
-    all_dicts = set(tuple(l) for l in [english, surnames, male_names, female_names, passwords])
+    all_dicts = set(tuple(l) for l in [english, surnames, male_names, female_names, passwords, chinese, chinese_surnames, chinese_names])
     passwords    = filter_dup(passwords,    all_dicts - set([tuple(passwords)]))
     male_names   = filter_dup(male_names,   all_dicts - set([tuple(male_names)]))
     female_names = filter_dup(female_names, all_dicts - set([tuple(female_names)]))
     surnames     = filter_dup(surnames,     all_dicts - set([tuple(surnames)]))
     english      = filter_dup(english,      all_dicts - set([tuple(english)]))
 
+    # remove this line in case of splitting dictionaries to separate files
+    chinese      		= filter_dup(chinese,      		all_dicts - set([tuple(chinese)]))
+    chinese_surnames 	= filter_dup(chinese_surnames, 	all_dicts - set([tuple(chinese_surnames)]))
+    chinese_names 		= filter_dup(chinese_names, 	all_dicts - set([tuple(chinese_names)]))
+
     with open('../frequency_lists.js', 'w') as f: # words are all ascii at this point
         lsts = locals()
-        for lst_name in 'passwords male_names female_names surnames english'.split():
+        for lst_name in 'passwords male_names female_names surnames english chinese chinese_surnames chinese_names'.split():
             lst = lsts[lst_name]
             f.write(to_js(lst, lst_name))
+
+    build_yaml('english', 'passwords male_names female_names surnames english'.split(), lsts)
+    build_yaml('chinese', 'chinese chinese_surnames chinese_names'.split(), lsts)
 
     print '\nall done! totals:\n'
     print 'passwords....', len(passwords)
@@ -178,7 +347,9 @@ def main():
     print 'female.......', len(female_names)
     print 'surnames.....', len(surnames)
     print 'english......', len(english)
-    print
+    print 'chinese......', len(chinese)
+    print 'chinese_names......', len(chinese_names)
+    print 'chinese_surnames......', len(chinese_surnames)
 
 if __name__ == '__main__':
     if os.path.basename(os.getcwd()) != 'scripts':
